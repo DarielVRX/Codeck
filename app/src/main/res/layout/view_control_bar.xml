@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Barra de controles fija: SIEMPRE se ubica debajo del teclado del sistema,
+    nunca encima. Contiene: grupos de símbolos expandibles, celda de cierre
+    pendiente (pila de autocompletado), flechas de dirección y el toggle Select.
+-->
+<merge xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <LinearLayout
+        android:id="@+id/expandPanel"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:background="@color/bg_panel"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:visibility="gone">
+
+        <HorizontalScrollView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/expandPanelSymbols"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal" />
+
+        </HorizontalScrollView>
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:background="@color/bg_elevated"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp">
+
+        <TextView
+            android:id="@+id/symGroupBrackets"
+            android:layout_width="wrap_content"
+            android:layout_height="30dp"
+            android:layout_marginEnd="6dp"
+            android:background="@drawable/bg_symbol_group"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:text="{ } ▾"
+            android:textColor="@color/text_primary"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/symGroupQuotes"
+            android:layout_width="wrap_content"
+            android:layout_height="30dp"
+            android:layout_marginEnd="6dp"
+            android:background="@drawable/bg_symbol_group"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:text="&quot; &#39; ▾"
+            android:textColor="@color/text_primary"
+            android:textSize="12sp" />
+
+        <!-- Celda dedicada de cierre pendiente: muestra el tope de la pila por archivo -->
+        <TextView
+            android:id="@+id/pendingCloserCell"
+            android:layout_width="wrap_content"
+            android:layout_height="30dp"
+            android:layout_marginEnd="6dp"
+            android:background="@drawable/bg_symbol_group"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:minWidth="34dp"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:text=""
+            android:textColor="@color/accent"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:visibility="invisible" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center">
+
+            <TextView
+                android:id="@+id/arrowUp"
+                android:layout_width="22dp"
+                android:layout_height="16dp"
+                android:gravity="center"
+                android:text="↑"
+                android:textColor="@color/text_dim"
+                android:textSize="12sp" />
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/arrowLeft"
+                    android:layout_width="22dp"
+                    android:layout_height="16dp"
+                    android:gravity="center"
+                    android:text="←"
+                    android:textColor="@color/text_dim"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/arrowDown"
+                    android:layout_width="22dp"
+                    android:layout_height="16dp"
+                    android:gravity="center"
+                    android:text="↓"
+                    android:textColor="@color/text_dim"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/arrowRight"
+                    android:layout_width="22dp"
+                    android:layout_height="16dp"
+                    android:gravity="center"
+                    android:text="→"
+                    android:textColor="@color/text_dim"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/selectToggle"
+            android:layout_width="wrap_content"
+            android:layout_height="28dp"
+            android:background="@drawable/bg_pill_outline"
+            android:gravity="center"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:text="@string/action_select"
+            android:textColor="@color/accent"
+            android:textSize="11sp" />
+
+    </LinearLayout>
+</merge>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CodeMobile</string>
+    <string name="action_run">Run</string>
+    <string name="action_new_file">Nuevo archivo</string>
+    <string name="action_open_folder">Abrir carpeta</string>
+    <string name="action_save">Guardar</string>
+    <string name="action_landscape">Girar pantalla</string>
+    <string name="action_select">Select</string>
+    <string name="hint_filename">Nombre del archivo (ej. main.py)</string>
+    <string name="label_choose_color">Elegí un color para esta pestaña</string>
+    <string name="permission_needed_title">Permiso de almacenamiento</string>
+    <string name="permission_needed_body">CodeMobile necesita acceso a tus archivos para abrir y guardar tu código. Tocá continuar y concedé el permiso en la pantalla de Ajustes.</string>
+    <string name="permission_continue">Continuar</string>
+    <string name="console_title">Consola</string>
+    <string name="console_clear">Limpiar</string>
+    <string name="no_files">No hay archivos abiertos aún. Tocá + para crear uno.</string>
+</resources>
