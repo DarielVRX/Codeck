@@ -24,12 +24,13 @@
         android:textColor="@color/text_dim"
         android:textSize="12sp" />
 
+    <!-- columnCount se fija dinámicamente en código según el ancho real de
+         pantalla (ver EditorActivity.showNewFileDialog), para que los círculos
+         de color nunca excedan el margen horizontal en pantallas angostas. -->
     <GridLayout
         android:id="@+id/colorGrid"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:columnCount="8"
-        android:rowCount="2" />
+        android:layout_marginTop="8dp" />
 
 </LinearLayout>

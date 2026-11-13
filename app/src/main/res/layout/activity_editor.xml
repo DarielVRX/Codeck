@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Layout raíz. Con android:windowSoftInputMode="adjustResize" en el manifest,
-    cuando el teclado del sistema aparece, este LinearLayout se comprime y el
-    teclado queda "debajo" de todo nuestro contenido en el árbol de vistas —
-    por eso bastante basta con que controlBar sea el último elemento visible
-    antes del área que Android reserva para el teclado: queda renderizada justo
-    encima de él, cumpliendo "la barra de controles va debajo del teclado".
+    Layout raíz. El inset del teclado (IME) se aplica manualmente como padding
+    inferior desde EditorActivity.setupKeyboardInsetHandling(), en vez de
+    depender de windowSoftInputMode="adjustResize" (poco confiable en Android
+    11+ con ventanas edge-to-edge). Gracias a ese padding, controlBar —el
+    último elemento visible de este LinearLayout— queda siempre empujado
+    justo arriba del teclado real, nunca debajo de él.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -13,19 +13,21 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="@color/bg"
-    android:fitsSystemWindows="true">
+    android:background="@color/bg">
 
-    <!-- Tabbar + acciones (se oculta en landscape mientras el teclado está activo) -->
+    <!-- Tabbar + acciones (se oculta en landscape mientras el teclado está activo).
+         El botón de rotar pantalla vive en la barra de controles (ver más abajo),
+         no aquí: aquí competía por espacio con las pestañas, que cambian de ancho. -->
     <LinearLayout
         android:id="@+id/tabBarRow"
         android:layout_width="match_parent"
-        android:layout_height="40dp"
+        android:layout_height="48dp"
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:background="@color/bg_elevated"
         android:paddingStart="6dp"
-        android:paddingEnd="6dp">
+        android:paddingEnd="6dp"
+        android:visibility="gone">
 
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/tabRecycler"
@@ -37,34 +39,33 @@
         <TextView
             android:id="@+id/runButton"
             android:layout_width="wrap_content"
-            android:layout_height="26dp"
+            android:layout_height="40dp"
             android:background="@drawable/bg_run_button"
             android:gravity="center"
-            android:paddingStart="10dp"
-            android:paddingEnd="10dp"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
             android:text="@string/action_run"
             android:textColor="#FFFFFF"
-            android:textSize="11sp"
+            android:textSize="13sp"
             android:textStyle="bold"
             android:layout_marginStart="6dp" />
 
         <TextView
-            android:id="@+id/folderButton"
-            android:layout_width="30dp"
-            android:layout_height="30dp"
+            android:id="@+id/saveButton"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
             android:gravity="center"
-            android:text="📁"
-            android:textSize="15sp"
+            android:text="💾"
+            android:textSize="18sp"
             android:layout_marginStart="4dp" />
 
         <TextView
-            android:id="@+id/rotateButton"
-            android:layout_width="30dp"
-            android:layout_height="30dp"
+            android:id="@+id/folderButton"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
             android:gravity="center"
-            android:text="⤾"
-            android:textColor="@color/text_dim"
-            android:textSize="16sp"
+            android:text="📁"
+            android:textSize="18sp"
             android:layout_marginStart="2dp" />
 
     </LinearLayout>
@@ -79,20 +80,40 @@
         android:paddingStart="12dp"
         android:textColor="@color/text_dim"
         android:textSize="11sp"
-        android:text="" />
+        android:text=""
+        android:visibility="gone" />
 
-    <!-- Contenedor del explorador de archivos (oculto por defecto, se muestra al tocar 📁) -->
+    <!-- Contenedor del explorador de archivos. Es la pantalla inicial de la app
+         (no una pestaña "sin título"): se muestra al abrir si no hay archivos
+         abiertos, y también al tocar 📁 con archivos ya abiertos. -->
     <FrameLayout
         android:id="@+id/explorerContainer"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:visibility="gone">
+        android:visibility="visible">
 
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/explorerRecycler"
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
+
+        <!-- Botón grande para crear un archivo nuevo: es la acción principal de
+             la pantalla inicial, por eso es grande y no un ícono chico más. -->
+        <TextView
+            android:id="@+id/createFileButtonBig"
+            android:layout_width="wrap_content"
+            android:layout_height="56dp"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginBottom="24dp"
+            android:background="@drawable/bg_run_button"
+            android:gravity="center"
+            android:paddingStart="28dp"
+            android:paddingEnd="28dp"
+            android:text="＋ Nuevo archivo"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:textStyle="bold" />
 
     </FrameLayout>
 
@@ -101,7 +122,8 @@
         android:id="@+id/editorContainer"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1" />
+        android:layout_weight="1"
+        android:visibility="gone" />
 
     <!-- Panel de consola de ejecución (oculto hasta el primer Run) -->
     <FrameLayout
@@ -110,10 +132,12 @@
         android:layout_height="wrap_content"
         android:visibility="gone" />
 
-    <!-- Barra de controles: SIEMPRE debajo del teclado del sistema -->
+    <!-- Barra de controles: SIEMPRE debajo del teclado del sistema. Oculta
+         mientras se está en el explorador (no hay editor activo que controlar). -->
     <com.codemobile.ui.ControlBarView
         android:id="@+id/controlBar"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content" />
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
 
 </LinearLayout>
