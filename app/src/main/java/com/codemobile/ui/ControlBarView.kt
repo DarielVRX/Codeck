@@ -154,7 +154,8 @@ class ControlBarView @JvmOverloads constructor(
         }
 
         if (selectModeActive) {
-            val anchor = editText.selectionEnd
+            if (editText.selectionAnchor < 0) editText.selectionAnchor = cursor
+            val anchor = editText.selectionAnchor
             editText.setSelection(minOf(anchor, newPos), maxOf(anchor, newPos))
         } else {
             editText.setSelection(newPos)

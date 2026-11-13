@@ -11,6 +11,7 @@ import android.widget.FrameLayout
 import android.widget.GridLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -53,6 +54,8 @@ class EditorActivity : AppCompatActivity() {
     private lateinit var folderButton: TextView
 
     private var consoleOutputView: TextView? = null
+    private var isKeyboardCurrentlyOpen: Boolean = false
+    private var backCallback: OnBackPressedCallback? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,6 +74,7 @@ class EditorActivity : AppCompatActivity() {
         setupControlButtons()
         setupKeyboardInsetHandling()
         setupKeyboardVisibilityWatcher()
+        setupBackNavigation()
 
         if (!PermissionHelper.hasStorageAccess()) {
             showPermissionDialog()
@@ -124,6 +128,8 @@ class EditorActivity : AppCompatActivity() {
         pathBar.visibility = View.VISIBLE
         editorContainer.visibility = View.VISIBLE
         controlBar.visibility = View.VISIBLE
+        applyHeaderVisibility(isKeyboardCurrentlyOpen)
+        updateBackCallbackState()
     }
 
     /** Vuelve a la pantalla de explorador (no cierra las pestañas, solo las oculta). */
@@ -135,6 +141,7 @@ class EditorActivity : AppCompatActivity() {
         controlBar.visibility = View.GONE
         explorerContainer.visibility = View.VISIBLE
         refreshExplorer()
+        updateBackCallbackState()
     }
 
     private fun switchToTab(index: Int) {
@@ -274,10 +281,34 @@ class EditorActivity : AppCompatActivity() {
         explorerAdapter.update(FileRepository.list(currentDir))
     }
 
+    /** El back del sistema solo navega dentro del explorador: sube una carpeta
+     *  si no estamos en la raíz. No cambia entre explorador/editor (para eso
+     *  ya está el botón 📁) y no cierra pestañas. En la raíz, o fuera del
+     *  explorador, se deja pasar el back normal (sale de la app). */
+    private fun setupBackNavigation() {
+        val callback = object : OnBackPressedCallback(false) {
+            override fun handleOnBackPressed() {
+                currentDir = currentDir.parentFile ?: currentDir
+                refreshExplorer()
+                updateBackCallbackState()
+            }
+        }
+        backCallback = callback
+        onBackPressedDispatcher.addCallback(this, callback)
+        updateBackCallbackState()
+    }
+
+    private fun updateBackCallbackState() {
+        val atRoot = currentDir.absolutePath == FileRepository.rootDir().absolutePath
+        val inExplorer = explorerContainer.visibility == View.VISIBLE
+        backCallback?.isEnabled = inExplorer && !atRoot
+    }
+
     private fun onExplorerItemClick(file: File) {
         if (file.isDirectory) {
             currentDir = file
             refreshExplorer()
+            updateBackCallbackState()
         } else {
             val openFile = OpenFile.fromFile(file, colorIndex = openFiles.size % paletteSize())
             addNewTab(openFile)
@@ -375,12 +406,16 @@ class EditorActivity : AppCompatActivity() {
             val imeInsets = insets.getInsets(WindowInsetsCompat.Type.ime())
             val systemBarInsets = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             val keyboardOpen = imeInsets.bottom > systemBarInsets.bottom
+            isKeyboardCurrentlyOpen = keyboardOpen
 
-            // Padding inferior = el espacio que ocupa el teclado (o la barra de
+            // Top: con setDecorFitsSystemWindows(false) el sistema deja de
+            // reservar el espacio de la barra de estado/notch, así que hay que
+            // compensarlo a mano o el header queda dibujado detrás de ella.
+            // Bottom = el espacio que ocupa el teclado (o la barra de
             // navegación cuando el teclado está cerrado, para no quedar tapado
             // por los botones de sistema).
             val bottomPadding = maxOf(imeInsets.bottom, systemBarInsets.bottom)
-            view.setPadding(view.paddingLeft, view.paddingTop, view.paddingRight, bottomPadding)
+            view.setPadding(view.paddingLeft, systemBarInsets.top, view.paddingRight, bottomPadding)
 
             if (keyboardOpen != wasKeyboardOpen) {
                 wasKeyboardOpen = keyboardOpen
@@ -401,7 +436,16 @@ class EditorActivity : AppCompatActivity() {
         // deben seguir ocultas sin importar el teclado.
         if (editorContainer.visibility != View.VISIBLE) return
         val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        // Guard explícito: el header solo puede ocultarse en el único caso
+        // deseado (landscape + teclado visible). Cualquier otra combinación
+        // (incluyendo portrait, sea o no el teclado visible) lo deja VISIBLE
+        // sin excepción, para que un cálculo erróneo de inset nunca lo oculte.
         val hideHeader = isLandscape && keyboardOpen
+        if (!isLandscape) {
+            tabBarRow.visibility = View.VISIBLE
+            pathBar.visibility = View.VISIBLE
+            return
+        }
         tabBarRow.visibility = if (hideHeader) View.GONE else View.VISIBLE
         pathBar.visibility = if (hideHeader) View.GONE else View.VISIBLE
     }
