@@ -12,6 +12,9 @@ import android.widget.GridLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.codemobile.R
@@ -23,10 +26,10 @@ import com.codemobile.files.PermissionHelper
 import java.io.File
 
 /**
- * Activity única de la app (MVP): tabbar + explorador + editor + consola +
- * barra de controles. El teclado del sistema se maneja con adjustResize
- * (ver manifest), así que la barra de controles queda automáticamente
- * pegada encima de él sin lógica adicional.
+ * Activity única de la app (MVP): explorador (pantalla inicial) + tabbar +
+ * editor + consola + barra de controles. El inset del teclado se maneja a
+ * mano (ver setupKeyboardInsetHandling), así que la barra de controles queda
+ * empujada arriba de él de forma confiable en cualquier versión de Android.
  */
 class EditorActivity : AppCompatActivity() {
 
@@ -46,28 +49,37 @@ class EditorActivity : AppCompatActivity() {
     private lateinit var controlBar: ControlBarView
     private lateinit var tabBarRow: LinearLayout
     private lateinit var runButton: TextView
+    private lateinit var saveButton: TextView
     private lateinit var folderButton: TextView
-    private lateinit var rotateButton: TextView
 
     private var consoleOutputView: TextView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Se maneja el inset del teclado (IME) manualmente en vez de confiar en
+        // android:windowSoftInputMode="adjustResize": en Android 11+ con un tema
+        // moderno, adjustResize por sí solo puede no redimensionar el layout de
+        // forma confiable. Con setDecorFitsSystemWindows(false) + un listener de
+        // insets, empujamos nosotros mismos el contenido (y por lo tanto la barra
+        // de controles) para que quede siempre arriba del teclado real.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(R.layout.activity_editor)
 
         bindViews()
         setupTabs()
         setupExplorer()
         setupControlButtons()
+        setupKeyboardInsetHandling()
         setupKeyboardVisibilityWatcher()
 
         if (!PermissionHelper.hasStorageAccess()) {
             showPermissionDialog()
         }
 
-        if (openFiles.isEmpty()) {
-            addNewTab(OpenFile.untitled(colorIndex = 0))
-        }
+        // La pantalla inicial es el explorador de archivos (ver activity_editor.xml:
+        // explorerContainer empieza visible, editorContainer/tabBarRow/controlBar
+        // ocultos). No se abre ninguna pestaña "sin título" automáticamente.
+        refreshExplorer()
     }
 
     private fun bindViews() {
@@ -80,8 +92,8 @@ class EditorActivity : AppCompatActivity() {
         controlBar = findViewById(R.id.controlBar)
         tabBarRow = findViewById(R.id.tabBarRow)
         runButton = findViewById(R.id.runButton)
+        saveButton = findViewById(R.id.saveButton)
         folderButton = findViewById(R.id.folderButton)
-        rotateButton = findViewById(R.id.rotateButton)
     }
 
     // ---------- Pestañas ----------
@@ -102,11 +114,32 @@ class EditorActivity : AppCompatActivity() {
         tabAdapter.setActiveIndex(activeIndex)
         tabAdapter.notifyDataSetChanged()
         renderActiveEditor()
+        showEditorMode()
+    }
+
+    /** Pasa de la pantalla de explorador a la de editor (tabbar + ruta + editor + controles). */
+    private fun showEditorMode() {
+        explorerContainer.visibility = View.GONE
+        tabBarRow.visibility = View.VISIBLE
+        pathBar.visibility = View.VISIBLE
+        editorContainer.visibility = View.VISIBLE
+        controlBar.visibility = View.VISIBLE
+    }
+
+    /** Vuelve a la pantalla de explorador (no cierra las pestañas, solo las oculta). */
+    private fun showExplorerMode() {
+        persistCurrentFile()
+        editorContainer.visibility = View.GONE
+        tabBarRow.visibility = View.GONE
+        pathBar.visibility = View.GONE
+        controlBar.visibility = View.GONE
+        explorerContainer.visibility = View.VISIBLE
+        refreshExplorer()
     }
 
     private fun switchToTab(index: Int) {
         if (index !in openFiles.indices) return
-        saveCurrentEditorStateIntoModel()
+        persistCurrentFile()
         activeIndex = index
         tabAdapter.setActiveIndex(activeIndex)
         renderActiveEditor()
@@ -117,6 +150,15 @@ class EditorActivity : AppCompatActivity() {
         val of = openFiles.getOrNull(activeIndex) ?: return
         of.content = StringBuilder(pane.codeEditText.text?.toString() ?: "")
         of.cursorPosition = pane.codeEditText.selectionStart
+    }
+
+    /** Vuelca el editor activo al modelo y lo escribe a disco (si ya tiene un File asociado). */
+    private fun persistCurrentFile() {
+        saveCurrentEditorStateIntoModel()
+        val of = openFiles.getOrNull(activeIndex) ?: return
+        if (of.file != null) {
+            FileRepository.save(of)
+        }
     }
 
     private fun renderActiveEditor() {
@@ -133,6 +175,7 @@ class EditorActivity : AppCompatActivity() {
         }
         editorContainer.addView(pane)
 
+        pane.codeEditText.selectModeActive = controlBar.selectModeActive
         controlBar.target = pane.codeEditText
         controlBar.updatePendingCloser(of.peekCloser(), of.pendingCount())
 
@@ -147,8 +190,19 @@ class EditorActivity : AppCompatActivity() {
         val colorGrid = dialogView.findViewById<GridLayout>(R.id.colorGrid)
 
         var selectedColor = 0
-        val swatchSize = (32 * resources.displayMetrics.density).toInt()
-        val margin = (4 * resources.displayMetrics.density).toInt()
+        val swatchSize = (36 * resources.displayMetrics.density).toInt()
+        val margin = (6 * resources.displayMetrics.density).toInt()
+        val cellWidth = swatchSize + margin * 2
+
+        // Ancho real disponible dentro del diálogo (ancho de pantalla menos el
+        // padding de 20dp por lado que tiene dialog_new_file.xml), para que las
+        // columnas calculadas nunca empujen círculos fuera del margen visible.
+        val dialogPadding = (20 * resources.displayMetrics.density).toInt()
+        val screenWidth = resources.displayMetrics.widthPixels
+        val availableWidth = screenWidth - dialogPadding * 2
+        val columns = (availableWidth / cellWidth).coerceAtLeast(1)
+        colorGrid.columnCount = columns
+        colorGrid.rowCount = (paletteSize() + columns - 1) / columns
 
         val swatches = mutableListOf<View>()
         for (i in 0 until paletteSize()) {
@@ -208,17 +262,12 @@ class EditorActivity : AppCompatActivity() {
         explorerRecycler.layoutManager = LinearLayoutManager(this)
         explorerRecycler.adapter = explorerAdapter
 
-        folderButton.setOnClickListener {
-            val showing = explorerContainer.visibility == View.VISIBLE
-            if (showing) {
-                explorerContainer.visibility = View.GONE
-                editorContainer.visibility = View.VISIBLE
-            } else {
-                refreshExplorer()
-                explorerContainer.visibility = View.VISIBLE
-                editorContainer.visibility = View.GONE
-            }
-        }
+        // Botón 📁 de la tabbar: vuelve de editor a explorador (solo visible
+        // cuando ya hay archivos abiertos, porque la tabbar está oculta si no).
+        folderButton.setOnClickListener { showExplorerMode() }
+
+        // Botón grande de la pantalla de explorador: crea el primer/siguiente archivo.
+        findViewById<TextView>(R.id.createFileButtonBig).setOnClickListener { showNewFileDialog() }
     }
 
     private fun refreshExplorer() {
@@ -230,11 +279,8 @@ class EditorActivity : AppCompatActivity() {
             currentDir = file
             refreshExplorer()
         } else {
-            saveCurrentEditorStateIntoModel()
             val openFile = OpenFile.fromFile(file, colorIndex = openFiles.size % paletteSize())
             addNewTab(openFile)
-            explorerContainer.visibility = View.GONE
-            editorContainer.visibility = View.VISIBLE
         }
     }
 
@@ -249,11 +295,21 @@ class EditorActivity : AppCompatActivity() {
             .show()
     }
 
-    // ---------- Botones de la tabbar: Run, carpeta, rotar ----------
+    // ---------- Botones: Run, carpeta (tabbar) y rotar (barra de controles) ----------
 
     private fun setupControlButtons() {
         runButton.setOnClickListener { runCurrentFile() }
-        rotateButton.setOnClickListener { toggleLandscape() }
+        saveButton.setOnClickListener { persistCurrentFile() }
+        controlBar.onRotateClick = { toggleLandscape() }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Guarda a disco si el usuario sale de la app (cambia de app, apaga la
+        // pantalla, etc.) para no perder cambios sin guardar explícitamente.
+        if (editorContainer.visibility == View.VISIBLE) {
+            persistCurrentFile()
+        }
     }
 
     private fun toggleLandscape() {
@@ -266,7 +322,7 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun runCurrentFile() {
-        saveCurrentEditorStateIntoModel()
+        persistCurrentFile()
         val of = openFiles.getOrNull(activeIndex) ?: return
         val lang = FileRepository.langFor(of.extension)
         val code = of.content.toString()
@@ -288,6 +344,9 @@ class EditorActivity : AppCompatActivity() {
             view.findViewById<TextView>(R.id.consoleClear).setOnClickListener {
                 consoleOutputView?.text = ""
             }
+            view.findViewById<TextView>(R.id.consoleClose).setOnClickListener {
+                consoleContainer.visibility = View.GONE
+            }
             consoleContainer.addView(view)
         }
         consoleContainer.visibility = View.VISIBLE
@@ -297,29 +356,50 @@ class EditorActivity : AppCompatActivity() {
         consoleOutputView?.append(text)
     }
 
-    // ---------- Landscape: ocultar header mientras el teclado está activo ----------
+    // ---------- Teclado: empujar la barra de controles arriba de él, y
+    // ocultar el header en landscape mientras está visible ----------
 
-    private fun setupKeyboardVisibilityWatcher() {
+    /**
+     * Escucha el inset real del IME (teclado) y aplica ese espacio como padding
+     * inferior del layout raíz, para que todo lo que esté antes de controlBar en
+     * el árbol de vistas (incluyéndola a ella) quede empujado arriba del teclado.
+     * Esto reemplaza la dependencia de windowSoftInputMode=adjustResize, que en
+     * Android 11+ con setDecorFitsSystemWindows(false) no redimensiona el layout
+     * por sí solo.
+     */
+    private fun setupKeyboardInsetHandling() {
         val rootView = findViewById<View>(R.id.rootLayout)
-        rootView.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
-            private var wasKeyboardOpen = false
+        var wasKeyboardOpen = false
 
-            override fun onGlobalLayout() {
-                val rect = android.graphics.Rect()
-                rootView.getWindowVisibleDisplayFrame(rect)
-                val screenHeight = rootView.rootView.height
-                val keypadHeight = screenHeight - rect.bottom
-                val keyboardOpen = keypadHeight > screenHeight * 0.15
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { view, insets ->
+            val imeInsets = insets.getInsets(WindowInsetsCompat.Type.ime())
+            val systemBarInsets = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val keyboardOpen = imeInsets.bottom > systemBarInsets.bottom
 
-                if (keyboardOpen != wasKeyboardOpen) {
-                    wasKeyboardOpen = keyboardOpen
-                    applyHeaderVisibility(keyboardOpen)
-                }
+            // Padding inferior = el espacio que ocupa el teclado (o la barra de
+            // navegación cuando el teclado está cerrado, para no quedar tapado
+            // por los botones de sistema).
+            val bottomPadding = maxOf(imeInsets.bottom, systemBarInsets.bottom)
+            view.setPadding(view.paddingLeft, view.paddingTop, view.paddingRight, bottomPadding)
+
+            if (keyboardOpen != wasKeyboardOpen) {
+                wasKeyboardOpen = keyboardOpen
+                applyHeaderVisibility(keyboardOpen)
             }
-        })
+            insets
+        }
+        ViewCompat.requestApplyInsets(rootView)
+    }
+
+    /** Se mantiene por compatibilidad de nombre; la lógica real vive en setupKeyboardInsetHandling. */
+    private fun setupKeyboardVisibilityWatcher() {
+        // intencionalmente vacío: ver setupKeyboardInsetHandling()
     }
 
     private fun applyHeaderVisibility(keyboardOpen: Boolean) {
+        // No forzar nada si estamos en modo explorador: ahí tabBarRow/pathBar
+        // deben seguir ocultas sin importar el teclado.
+        if (editorContainer.visibility != View.VISIBLE) return
         val isLandscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         val hideHeader = isLandscape && keyboardOpen
         tabBarRow.visibility = if (hideHeader) View.GONE else View.VISIBLE

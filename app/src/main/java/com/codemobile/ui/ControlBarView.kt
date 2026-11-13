@@ -30,8 +30,11 @@ class ControlBarView @JvmOverloads constructor(
     private lateinit var expandPanelSymbols: LinearLayout
     private lateinit var symGroupBrackets: TextView
     private lateinit var symGroupQuotes: TextView
+    private lateinit var symGroupPunctuation: TextView
     private lateinit var pendingCloserCell: TextView
+    private lateinit var tabKey: TextView
     private lateinit var selectToggle: TextView
+    private lateinit var rotateButton: TextView
     private lateinit var arrowUp: TextView
     private lateinit var arrowDown: TextView
     private lateinit var arrowLeft: TextView
@@ -40,6 +43,7 @@ class ControlBarView @JvmOverloads constructor(
     var target: CodeEditText? = null
     var selectModeActive: Boolean = false
         private set
+    var onRotateClick: (() -> Unit)? = null
 
     init {
         orientation = VERTICAL
@@ -49,6 +53,22 @@ class ControlBarView @JvmOverloads constructor(
         setupArrows()
         setupSelectToggle()
         setupPendingCloserCell()
+        setupRotateButton()
+        setupTabKey()
+    }
+
+    /** Tap inserta un tab real (\t); long-press desindenta la línea actual
+     *  (mismo efecto que el gesto de pinch-in, para quien no use gestos). */
+    private fun setupTabKey() {
+        tabKey.setOnClickListener { insertAtCursor("\t") }
+        tabKey.setOnLongClickListener {
+            target?.indentCurrentLine(increase = false)
+            true
+        }
+    }
+
+    private fun setupRotateButton() {
+        rotateButton.setOnClickListener { onRotateClick?.invoke() }
     }
 
     private fun bindViews() {
@@ -56,8 +76,11 @@ class ControlBarView @JvmOverloads constructor(
         expandPanelSymbols = findViewById(R.id.expandPanelSymbols)
         symGroupBrackets = findViewById(R.id.symGroupBrackets)
         symGroupQuotes = findViewById(R.id.symGroupQuotes)
+        symGroupPunctuation = findViewById(R.id.symGroupPunctuation)
         pendingCloserCell = findViewById(R.id.pendingCloserCell)
+        tabKey = findViewById(R.id.tabKey)
         selectToggle = findViewById(R.id.selectToggle)
+        rotateButton = findViewById(R.id.rotateButton)
         arrowUp = findViewById(R.id.arrowUp)
         arrowDown = findViewById(R.id.arrowDown)
         arrowLeft = findViewById(R.id.arrowLeft)
@@ -71,6 +94,9 @@ class ControlBarView @JvmOverloads constructor(
         symGroupQuotes.setOnClickListener {
             showExpandPanel(listOf('"', '\'', '`', '_', '-'))
         }
+        symGroupPunctuation.setOnClickListener {
+            showExpandPanel(listOf('=', ';', ':', '.', ',', '|', '&'))
+        }
     }
 
     private fun showExpandPanel(symbols: List<Char>) {
@@ -78,12 +104,12 @@ class ControlBarView @JvmOverloads constructor(
         for (sym in symbols) {
             val tv = TextView(context)
             tv.text = sym.toString()
-            tv.textSize = 13f
+            tv.textSize = 15f
             tv.setTextColor(resources.getColor(R.color.text_primary, context.theme))
             tv.setBackgroundResource(R.drawable.bg_symbol_group)
             tv.gravity = android.view.Gravity.CENTER
-            val size = (30 * resources.displayMetrics.density).toInt()
-            val margin = (4 * resources.displayMetrics.density).toInt()
+            val size = (44 * resources.displayMetrics.density).toInt()
+            val margin = (6 * resources.displayMetrics.density).toInt()
             val lp = LinearLayout.LayoutParams(size, size)
             lp.marginEnd = margin
             tv.layoutParams = lp
@@ -138,6 +164,7 @@ class ControlBarView @JvmOverloads constructor(
     private fun setupSelectToggle() {
         selectToggle.setOnClickListener {
             selectModeActive = !selectModeActive
+            target?.selectModeActive = selectModeActive
             selectToggle.isSelected = selectModeActive
             selectToggle.setBackgroundResource(
                 if (selectModeActive) R.drawable.bg_pill_filled else R.drawable.bg_pill_outline
