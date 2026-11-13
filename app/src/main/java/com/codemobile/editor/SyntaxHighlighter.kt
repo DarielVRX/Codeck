@@ -62,6 +62,12 @@ class SyntaxHighlighter(private val lang: Lang) {
                 editable.removeSpan(s)
             }
         }
+        val tabSpans = editable.getSpans(lineStart, lineEnd, TabMarkerSpan::class.java)
+        for (s in tabSpans) {
+            if (editable.getSpanStart(s) >= lineStart && editable.getSpanEnd(s) <= lineEnd) {
+                editable.removeSpan(s)
+            }
+        }
         val lineText = editable.subSequence(lineStart, lineEnd).toString()
         for (rule in rules) {
             val matcher = rule.pattern.matcher(lineText)
@@ -72,6 +78,18 @@ class SyntaxHighlighter(private val lang: Lang) {
                 editable.setSpan(
                     ForegroundColorSpan(colorFor(rule.colorAttr)),
                     start, end,
+                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+        }
+        // Marca visual del tab real (\t), para distinguirlo de espacios cuando
+        // el mismo archivo se edita también en un editor de escritorio.
+        for (i in lineText.indices) {
+            if (lineText[i] == '\t') {
+                val pos = lineStart + i
+                editable.setSpan(
+                    TabMarkerSpan(colorFor(R_COMMENT)),
+                    pos, pos + 1,
                     Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
                 )
             }

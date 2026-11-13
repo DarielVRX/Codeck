@@ -34,8 +34,19 @@ class CodeEditText @JvmOverloads constructor(
 
     /** Cuando está activo (toggle "Select" de la barra de controles), un tap
      *  sobre el texto extiende la selección hasta el punto tocado en vez de
-     *  simplemente mover el cursor ahí. */
+     *  simplemente mover el cursor ahí. El punto de inicio queda fijo en
+     *  [selectionAnchor] desde que se activa (o desde el primer toque/flecha),
+     *  y cada toque o flecha posterior solo mueve el otro extremo: así la
+     *  selección no "salta" usando selectionEnd como ancla cambiante. */
     var selectModeActive: Boolean = false
+        set(value) {
+            field = value
+            selectionAnchor = if (value) selectionStart else -1
+        }
+
+    /** Extremo fijo de la selección mientras selectModeActive está activo, o -1
+     *  si todavía no se fijó (se fija con el primer toque/flecha tras activar). */
+    var selectionAnchor: Int = -1
 
     private var highlighter = SyntaxHighlighter(Lang.PLAIN)
     private var selfEditing = false
@@ -60,15 +71,24 @@ class CodeEditText @JvmOverloads constructor(
         private var insertStart: Int = -1
         private var deletedOpenerInfo: Pair<Int, Char>? = null // (posición donde quedó el cierre, carácter borrado)
         private var typedManualCloser: Pair<Int, Char>? = null // (posición, carácter) cuando el usuario tipea un cierre que coincide con uno autocompletado
+        private var deletedCloserChar: Char? = null // cierre "suelto" borrado (no el caso de abridor+cierre intacto), para reconciliar simetría después
 
         override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
             if (selfEditing || s == null) return
+            textChangeInFlight = true
             // Detecta borrado de un solo carácter que sea un "abridor" con su cierre
             // autocompletado todavía intacto justo después, para arrastrar el cierre también.
             if (count == 1 && after == 0) {
                 val deleted = s[start]
                 if (OpenFile.closerFor(deleted) != null && autoClosedPositions.contains(start + 1)) {
                     deletedOpenerInfo = start to deleted
+                } else if (isCloserChar(deleted)) {
+                    // Se borró un cierre "suelto" (no el caso anterior): puede dejar una
+                    // apertura sin su pareja en el texto. Se reconcilia en afterTextChanged,
+                    // comparando conteos reales, para no activarse por borrar basura que no
+                    // rompe la simetría (p.ej. un cierre ya sobrante).
+                    deletedCloserChar = deleted
+                    autoClosedPositions.remove(start)
                 }
             }
         }
@@ -78,14 +98,21 @@ class CodeEditText @JvmOverloads constructor(
             // Detecta inserción de un solo carácter "abridor" para autocompletar su cierre.
             if (count == 1 && before == 0) {
                 val inserted = s[start]
-                val closer = OpenFile.closerFor(inserted)
-                if (closer != null) {
-                    insertedOpener = inserted
-                    insertStart = start
-                } else if (isCloserChar(inserted) && autoClosedPositions.contains(start)) {
+                // Las comillas son simétricas (abren Y cierran con el mismo carácter), así
+                // que hay que comprobar PRIMERO si en esta posición ya hay un cierre auto-
+                // insertado esperando: si no se chequea esto antes, '"'/'\'' siempre caía en
+                // la rama de "nueva apertura" (closerFor las resuelve a sí mismas) y nunca
+                // se detectaba como el cierre manual de una ya pendiente, duplicándose.
+                if (isCloserChar(inserted) && autoClosedPositions.contains(start)) {
                     // El usuario tipeó manualmente un cierre que ya estaba autocompletado
                     // justo en esa posición: en vez de duplicarlo, se sobrescribe (se mueve el cursor).
                     typedManualCloser = start to inserted
+                } else {
+                    val closer = OpenFile.closerFor(inserted)
+                    if (closer != null) {
+                        insertedOpener = inserted
+                        insertStart = start
+                    }
                 }
             }
             // Detecta Enter para aplicar autoindentación.
@@ -112,6 +139,8 @@ class CodeEditText @JvmOverloads constructor(
                 onPendingCloserChanged?.invoke(openFile?.peekCloser(), openFile?.pendingCount() ?: 0)
                 rehighlightCurrentLine(editable)
                 openFile?.isDirty = true
+                textChangeInFlight = false
+                lastCursorPos = selectionEnd
                 return
             }
 
@@ -132,6 +161,12 @@ class CodeEditText @JvmOverloads constructor(
                 }
             }
 
+            val deletedCloser = deletedCloserChar
+            if (deletedCloser != null) {
+                deletedCloserChar = null
+                reconcileSymmetryAfterDelete(editable, deletedCloser)
+            }
+
             val opener = insertedOpener
             if (opener != null) {
                 insertedOpener = null
@@ -148,20 +183,87 @@ class CodeEditText @JvmOverloads constructor(
             }
             rehighlightCurrentLine(editable)
             openFile?.isDirty = true
+            textChangeInFlight = false
+            lastCursorPos = selectionEnd
         }
     }
 
     private fun isCloserChar(c: Char): Boolean = c == '}' || c == ')' || c == ']' || c == '"' || c == '\''
 
+    private val OPENER_BY_CLOSER = mapOf('}' to '{', ')' to '(', ']' to '[', '"' to '"', '\'' to '\'')
+
+    /** Cuenta, para el tipo de [closer] borrado, si en el texto actual quedó una
+     *  apertura sin cierre (más aperturas que cierres de ese tipo). Si es así,
+     *  se asume que el usuario borró el cierre "por error" y se vuelve a
+     *  acumular en la pila de OpenFile (reaparece en la celda dedicada), para
+     *  que no se pierda la señal de "cierre pendiente". No compara posiciones,
+     *  solo totales, así que un cierre ya sobrante (de más) no activa nada. */
+    private fun reconcileSymmetryAfterDelete(editable: Editable, closer: Char) {
+        val opener = OPENER_BY_CLOSER[closer] ?: return
+        val full = editable.toString()
+        val openCount: Int
+        val closeCount: Int
+        if (opener == closer) {
+            // Comillas: cada carácter alterna abrir/cerrar; una cantidad impar
+            // significa una comilla sin su pareja.
+            val total = full.count { it == closer }
+            openCount = total
+            closeCount = if (total % 2 == 0) total else total - 1
+        } else {
+            openCount = full.count { it == opener }
+            closeCount = full.count { it == closer }
+        }
+        if (openCount > closeCount) {
+            openFile?.pushCloser(closer)
+            onPendingCloserChanged?.invoke(openFile?.peekCloser(), openFile?.pendingCount() ?: 0)
+        }
+    }
+
     init {
         addTextChangedListener(watcher)
+    }
+
+    /** Posición del cursor antes del cambio de selección en curso, para saber
+     *  si avanzó (cruzó hacia la derecha) sobre algún auto-cierre pendiente.
+     *  Solo se actualiza/evalúa fuera de una edición de texto en curso (ver
+     *  textChangeInFlight): mientras se escribe letra a letra DENTRO de un
+     *  par, la posición trackeada se desplaza junto con el cursor en el mismo
+     *  ciclo de watcher y nunca debe leerse como "cruce". */
+    private var lastCursorPos: Int = -1
+    private var textChangeInFlight = false
+
+    override fun onSelectionChanged(selStart: Int, selEnd: Int) {
+        super.onSelectionChanged(selStart, selEnd)
+        if (selfEditing || textChangeInFlight) {
+            lastCursorPos = selEnd
+            return
+        }
+        checkCursorCrossedPending(selEnd)
+    }
+
+    /** Si el cursor avanzó hacia la derecha cruzando una o más posiciones
+     *  auto-cerradas pendientes sin consumirlas, se asume que el usuario las
+     *  abandonó: se descartan de la pila y de la celda, tantas como se hayan
+     *  saltado de una vez (apiladas en el mismo orden). */
+    private fun checkCursorCrossedPending(selEnd: Int) {
+        val prev = lastCursorPos
+        lastCursorPos = selEnd
+        if (prev < 0 || autoClosedPositions.isEmpty() || selEnd <= prev) return
+        val skipped = autoClosedPositions.filter { it in prev until selEnd }
+        if (skipped.isEmpty()) return
+        autoClosedPositions.removeAll(skipped.toSet())
+        val of = openFile
+        if (of != null) {
+            repeat(skipped.size) { of.popCloser() }
+            onPendingCloserChanged?.invoke(of.peekCloser(), of.pendingCount())
+        }
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (selectModeActive && event.action == MotionEvent.ACTION_UP) {
             val offset = getOffsetForPosition(event.x, event.y)
-            val anchor = if (selectionEnd >= 0) selectionEnd else offset
-            setSelection(minOf(anchor, offset), maxOf(anchor, offset))
+            if (selectionAnchor < 0) selectionAnchor = offset
+            setSelection(minOf(selectionAnchor, offset), maxOf(selectionAnchor, offset))
             return true
         }
         return super.onTouchEvent(event)
