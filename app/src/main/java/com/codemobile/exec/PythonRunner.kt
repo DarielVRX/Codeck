@@ -41,7 +41,12 @@ object PythonRunner {
 
             val py = Python.getInstance()
             val builtins = py.getModule("builtins")
-            builtins.callAttr("exec", code)
+            // exec(code) sin un diccionario de globals explícito intenta inspeccionar
+            // el frame del llamador (vía sys._getframe) para resolverlos — y llamado
+            // desde Java, sin un frame Python real detrás, eso falla con un error de
+            // frame no disponible. Pasar un dict nuevo evita esa inspección por completo.
+            val globals = py.getModule("builtins").callAttr("dict")
+            builtins.callAttr("exec", code, globals)
 
             val duration = System.currentTimeMillis() - startTime
             val errText = errStream.toString().ifBlank { null }
