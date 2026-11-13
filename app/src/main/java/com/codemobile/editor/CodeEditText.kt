@@ -23,6 +23,13 @@ class CodeEditText @JvmOverloads constructor(
     attrs: AttributeSet? = null
 ) : AppCompatEditText(context, attrs) {
 
+    // Debe ser el primer campo: super()'s constructor (EditText.<init>) llama
+    // setText() y dispara onSelectionChanged ANTES de que el resto de los
+    // inicializadores de esta subclase corran. Cualquier acceso a otra
+    // propiedad desde un callback de super() en ese punto crashea con NPE, así
+    // que los callbacks chequean este flag primero (true recién al final de init{}).
+    private var constructed = false
+
     var lang: Lang = Lang.PLAIN
         set(value) {
             field = value
@@ -221,6 +228,7 @@ class CodeEditText @JvmOverloads constructor(
 
     init {
         addTextChangedListener(watcher)
+        constructed = true
     }
 
     /** Posición del cursor antes del cambio de selección en curso, para saber
@@ -234,6 +242,10 @@ class CodeEditText @JvmOverloads constructor(
 
     override fun onSelectionChanged(selStart: Int, selEnd: Int) {
         super.onSelectionChanged(selStart, selEnd)
+        // super()'s own EditText.<init> calls setText() before this subclass's
+        // property initializers (selfEditing, textChangeInFlight, lastCursorPos,
+        // autoClosedPositions) have run, which otherwise NPEs here.
+        if (!constructed) return
         if (selfEditing || textChangeInFlight) {
             lastCursorPos = selEnd
             return
@@ -246,6 +258,11 @@ class CodeEditText @JvmOverloads constructor(
      *  abandonó: se descartan de la pila y de la celda, tantas como se hayan
      *  saltado de una vez (apiladas en el mismo orden). */
     private fun checkCursorCrossedPending(selEnd: Int) {
+        // Durante la construcción de la vista, EditText.<init> llama setText()
+        // internamente, lo que dispara onSelectionChanged antes de que los
+        // inicializadores de propiedades de esta subclase (autoClosedPositions,
+        // etc.) hayan corrido. Este guard evita tocarlos hasta que init{} termine.
+        if (!constructed) return
         val prev = lastCursorPos
         lastCursorPos = selEnd
         if (prev < 0 || autoClosedPositions.isEmpty() || selEnd <= prev) return
