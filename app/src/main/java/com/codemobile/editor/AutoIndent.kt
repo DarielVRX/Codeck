@@ -10,19 +10,18 @@ import com.codemobile.files.FileRepository.Lang
  * - En cualquier otro caso, la nueva línea hereda exactamente la misma indentación
  *   ("mantener sangría"), que es el comportamiento mínimo esperable.
  *
+ * Usa el carácter tab real (\t) como unidad de indentación, no espacios: así el
+ * ancho visual queda a criterio de cada editor (incluido uno de escritorio que
+ * abra el mismo archivo después), en vez de imponer un número fijo de espacios
+ * que puede chocar con la convención del proyecto.
+ *
  * No hace dedent automático al escribir '}' o 'return' — eso queda fuera del MVP.
  */
 object AutoIndent {
 
-    private const val SPACES_PYTHON = "    "      // 4 espacios
-    private const val SPACES_JS = "  "             // 2 espacios
-    private const val SPACES_DEFAULT = "    "
+    private const val TAB = "\t"
 
-    fun indentUnitFor(lang: Lang): String = when (lang) {
-        Lang.PYTHON -> SPACES_PYTHON
-        Lang.JAVASCRIPT -> SPACES_JS
-        Lang.PLAIN -> SPACES_DEFAULT
-    }
+    fun indentUnitFor(lang: Lang): String = TAB
 
     /**
      * Calcula la indentación a insertar después de un salto de línea, dada la

@@ -4,6 +4,7 @@ import android.content.Context
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.AttributeSet
+import android.view.MotionEvent
 import androidx.appcompat.widget.AppCompatEditText
 import com.codemobile.files.FileRepository.Lang
 import com.codemobile.files.OpenFile
@@ -31,14 +32,46 @@ class CodeEditText @JvmOverloads constructor(
     var openFile: OpenFile? = null
     var onPendingCloserChanged: ((Char?, Int) -> Unit)? = null
 
+    /** Cuando está activo (toggle "Select" de la barra de controles), un tap
+     *  sobre el texto extiende la selección hasta el punto tocado en vez de
+     *  simplemente mover el cursor ahí. */
+    var selectModeActive: Boolean = false
+
     private var highlighter = SyntaxHighlighter(Lang.PLAIN)
     private var selfEditing = false
+
+    /** Posiciones (en el texto actual) de cierres autocompletados aún no "tocados" por el usuario.
+     *  Se usan para decidir si un backspace sobre el abridor debe arrastrar también el cierre,
+     *  y si escribir manualmente el cierre debe sobrescribir en vez de duplicar. */
+    private val autoClosedPositions = sortedSetOf<Int>()
+
+    private fun shiftAutoClosedPositions(fromIndex: Int, delta: Int) {
+        if (delta == 0) return
+        val updated = sortedSetOf<Int>()
+        for (p in autoClosedPositions) {
+            updated.add(if (p >= fromIndex) (p + delta).coerceAtLeast(0) else p)
+        }
+        autoClosedPositions.clear()
+        autoClosedPositions.addAll(updated)
+    }
 
     private val watcher = object : TextWatcher {
         private var insertedOpener: Char? = null
         private var insertStart: Int = -1
+        private var deletedOpenerInfo: Pair<Int, Char>? = null // (posición donde quedó el cierre, carácter borrado)
+        private var typedManualCloser: Pair<Int, Char>? = null // (posición, carácter) cuando el usuario tipea un cierre que coincide con uno autocompletado
 
-        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
+            if (selfEditing || s == null) return
+            // Detecta borrado de un solo carácter que sea un "abridor" con su cierre
+            // autocompletado todavía intacto justo después, para arrastrar el cierre también.
+            if (count == 1 && after == 0) {
+                val deleted = s[start]
+                if (OpenFile.closerFor(deleted) != null && autoClosedPositions.contains(start + 1)) {
+                    deletedOpenerInfo = start to deleted
+                }
+            }
+        }
 
         override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
             if (selfEditing || s == null) return
@@ -49,6 +82,10 @@ class CodeEditText @JvmOverloads constructor(
                 if (closer != null) {
                     insertedOpener = inserted
                     insertStart = start
+                } else if (isCloserChar(inserted) && autoClosedPositions.contains(start)) {
+                    // El usuario tipeó manualmente un cierre que ya estaba autocompletado
+                    // justo en esa posición: en vez de duplicarlo, se sobrescribe (se mueve el cursor).
+                    typedManualCloser = start to inserted
                 }
             }
             // Detecta Enter para aplicar autoindentación.
@@ -59,6 +96,42 @@ class CodeEditText @JvmOverloads constructor(
 
         override fun afterTextChanged(editable: Editable?) {
             if (selfEditing || editable == null) return
+
+            val manualCloser = typedManualCloser
+            if (manualCloser != null) {
+                typedManualCloser = null
+                val (pos, _) = manualCloser
+                selfEditing = true
+                // El carácter ya se insertó en `pos`; lo quitamos y solo movemos el cursor,
+                // porque el cierre autocompletado que ya estaba ahí cumple la misma función.
+                editable.delete(pos, pos + 1)
+                setSelection(pos + 1)
+                selfEditing = false
+                autoClosedPositions.remove(pos)
+                openFile?.popCloser()
+                onPendingCloserChanged?.invoke(openFile?.peekCloser(), openFile?.pendingCount() ?: 0)
+                rehighlightCurrentLine(editable)
+                openFile?.isDirty = true
+                return
+            }
+
+            val deletedInfo = deletedOpenerInfo
+            if (deletedInfo != null) {
+                deletedOpenerInfo = null
+                val (openerPos, _) = deletedInfo
+                // Tras el backspace del abridor, el cierre autocompletado quedó en openerPos.
+                if (openerPos < editable.length && autoClosedPositions.contains(openerPos)) {
+                    selfEditing = true
+                    editable.delete(openerPos, openerPos + 1)
+                    setSelection(openerPos)
+                    selfEditing = false
+                    autoClosedPositions.remove(openerPos)
+                    shiftAutoClosedPositions(openerPos, -1)
+                    openFile?.popCloser()
+                    onPendingCloserChanged?.invoke(openFile?.peekCloser(), openFile?.pendingCount() ?: 0)
+                }
+            }
+
             val opener = insertedOpener
             if (opener != null) {
                 insertedOpener = null
@@ -68,6 +141,8 @@ class CodeEditText @JvmOverloads constructor(
                 editable.insert(pos, closer.toString())
                 setSelection(pos)
                 selfEditing = false
+                shiftAutoClosedPositions(pos, 1)
+                autoClosedPositions.add(pos)
                 openFile?.pushCloser(closer)
                 onPendingCloserChanged?.invoke(openFile?.peekCloser(), openFile?.pendingCount() ?: 0)
             }
@@ -76,8 +151,20 @@ class CodeEditText @JvmOverloads constructor(
         }
     }
 
+    private fun isCloserChar(c: Char): Boolean = c == '}' || c == ')' || c == ']' || c == '"' || c == '\''
+
     init {
         addTextChangedListener(watcher)
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (selectModeActive && event.action == MotionEvent.ACTION_UP) {
+            val offset = getOffsetForPosition(event.x, event.y)
+            val anchor = if (selectionEnd >= 0) selectionEnd else offset
+            setSelection(minOf(anchor, offset), maxOf(anchor, offset))
+            return true
+        }
+        return super.onTouchEvent(event)
     }
 
     private fun handleNewLine(newlineIndex: Int) {
@@ -92,6 +179,7 @@ class CodeEditText @JvmOverloads constructor(
             text.insert(insertPos, indent)
             setSelection(insertPos + indent.length)
             selfEditing = false
+            shiftAutoClosedPositions(insertPos, indent.length)
         }
     }
 
@@ -114,6 +202,7 @@ class CodeEditText @JvmOverloads constructor(
         text.insert(pos, closer.toString())
         setSelection(pos + 1)
         selfEditing = false
+        shiftAutoClosedPositions(pos, 1)
         onPendingCloserChanged?.invoke(of.peekCloser(), of.pendingCount())
     }
 
@@ -129,6 +218,7 @@ class CodeEditText @JvmOverloads constructor(
         if (increase) {
             text.insert(lineStart, unit)
             setSelection((cursor + unit.length).coerceAtMost(text.length))
+            shiftAutoClosedPositions(lineStart, unit.length)
         } else {
             var removed = 0
             while (removed < unit.length && lineStart + removed < full.length &&
@@ -137,6 +227,7 @@ class CodeEditText @JvmOverloads constructor(
             if (removed > 0) {
                 text.delete(lineStart, lineStart + removed)
                 setSelection((cursor - removed).coerceAtLeast(lineStart))
+                shiftAutoClosedPositions(lineStart + removed, -removed)
             }
         }
         selfEditing = false
